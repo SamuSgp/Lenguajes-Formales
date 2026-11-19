@@ -1,0 +1,420 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish]{babel}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\geometry{margin=2.5cm}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  keywordstyle=\color{blue},
+  commentstyle=\color{green!50!black},
+  stringstyle=\color{red!70!black},
+}
+
+\title{%
+  \textbf{Informe del Proyecto}\\[6pt]
+  \large Parsers LL(1) y SLR(1) con Evaluador de SDD\\[4pt]
+  \normalsize SI2002 / ST0270 / CM0081 --- Lenguajes Formales\\
+  Universidad EAFIT, 2026-2\\
+  Profesor: Oscar Rodr\'iguez Cifuentes
+}
+\author{
+  Samuel Gonz\'alez P\'erez\\
+  \texttt{sgonzalep3@eafit.edu.co}
+  \and
+  Samuel L\'opez Bonilla\\
+  \texttt{slopezb8q@eafit.edu.co}
+}
+\date{Noviembre 2026}
+
+\begin{document}
+\maketitle
+
+%% ============================================================
+\section{Algoritmos y estructuras de datos}
+\label{sec:algorithms}
+
+Todos los algoritmos siguen \emph{Compilers: Principles, Techniques, and Tools} (Aho et al., 2da edici\'on). La Tabla~\ref{tab:refs} lista las referencias espec\'ificas.
+
+\begin{table}[h]
+\centering
+\caption{Referencias del libro para cada componente.}
+\label{tab:refs}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Componente} & \textbf{Secci\'on / Algoritmo} & \textbf{Estructura de datos} \\
+\midrule
+FIRST / FOLLOW          & Secci\'on 4.4.2                       & \texttt{dict[str, set[str]]} \\
+Tabla LL(1)             & Secci\'on 4.4.3                       & \texttt{dict[(str,str), (str,list)]} \\
+Parser predictivo       & Algoritmo 4.34, Secci\'on 4.4.4       & Pila expl\'icita (list) \\
+\'Items LR(0)            & Secci\'on 4.6.2                       & Clase \texttt{Item} (head, body, dot) \\
+CLOSURE / GOTO          & Algoritmo 4.32, Secci\'on 4.6.2       & \texttt{frozenset[Item]} \\
+Colecci\'on can\'onica    & Secci\'on 4.6.2                       & Lista de conjuntos de \'items \\
+Tablas SLR(1)           & Algoritmo 4.46, Secci\'on 4.6.4       & ACTION: \texttt{dict[(int,str), tuple]}, GOTO: \texttt{dict[(int,str), int]} \\
+Parser LR               & Algoritmo 4.44, Secci\'on 4.6.3       & Pila de estados + pila de s\'imbolos \\
+Grafo de dependencias   & Secci\'on 5.2.1                       & Lista de adyacencia + mapa de in-degree \\
+Orden topol\'ogico       & Secci\'on 5.2.2 (algoritmo de Kahn)   & Cola (ordenada para determinismo) \\
+Evaluador SDD           & Secciones 5.1--5.2                   & \'Arbol de parseo (\texttt{TreeNode}) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+La gram\'atica se representa como una clase de Python con conjuntos de no-terminales y terminales, un diccionario de producciones y un s\'imbolo inicial. Las producciones mapean cada no-terminal a una lista de alternativas, donde cada alternativa es una lista de s\'imbolos de un solo car\'acter. Epsilon se representa con el car\'acter~\texttt{e} y el marcador de fin de entrada con~\texttt{\$}.
+
+
+%% ============================================================
+\section{\'Items 1 y 2 --- FIRST/FOLLOW y Parsers}
+\label{sec:items12}
+
+\subsection{Gram\'atica propia}
+
+Definimos la siguiente gram\'atica $G$:
+
+\begin{align*}
+S &\to a\,B\,S \mid b \\
+B &\to b \mid \varepsilon
+\end{align*}
+
+En formato de entrada:
+\begin{lstlisting}
+2
+S -> aBS b
+B -> b e
+\end{lstlisting}
+
+$S$ es recursiva ($S \to aBS$ contiene $S$ en el cuerpo) y $B$ tiene una producci\'on-$\varepsilon$, as\'i que la gram\'atica ejercita los casos principales de FIRST/FOLLOW.
+
+\subsection{Conjuntos FIRST y FOLLOW}
+
+Para la gram\'atica $G$:
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{S\'imbolo} & \textbf{FIRST} & \textbf{FOLLOW} \\
+\midrule
+$S$ & $\{a, b\}$     & $\{\$\}$   \\
+$B$ & $\{b, \varepsilon\}$    & $\{a, b\}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Calculados por nuestro programa:
+\begin{lstlisting}
+First(B) = {b, e}
+First(S) = {a, b}
+Follow(B) = {a, b}
+Follow(S) = {$}
+\end{lstlisting}
+
+\subsection{Tabla LL(1)}
+
+\begin{center}
+\begin{tabular}{@{}l|ccc@{}}
+\toprule
+ & $a$ & $b$ & $\$$ \\
+\midrule
+$S$ & $S \to aBS$ & $S \to b$ & \\
+$B$ & $B \to \varepsilon$ & $B \to b$ & \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Ninguna celda tiene dos entradas, por lo tanto $G$ es LL(1).
+
+\subsection{Parseo de \texorpdfstring{$w = abb$}{w = abb} paso a paso (LL(1))}
+
+\begin{center}
+\begin{longtable}{@{}clll@{}}
+\toprule
+\textbf{Paso} & \textbf{Pila} & \textbf{Entrada} & \textbf{Acci\'on} \\
+\midrule
+\endhead
+1 & $\$\;S$       & $a\,b\,b\,\$$ & $S \to aBS$ \\
+2 & $\$\;S\,B\,a$ & $a\,b\,b\,\$$ & match $a$ \\
+3 & $\$\;S\,B$    & $b\,b\,\$$ & $B \to b$ \\
+4 & $\$\;S\,b$    & $b\,b\,\$$ & match $b$ \\
+5 & $\$\;S$       & $b\,\$$ & $S \to b$ \\
+6 & $\$\;b$       & $b\,\$$ & match $b$ \\
+7 & $\$$          & $\$$ & \textbf{aceptar} \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+La cadena $abb$ se acepta en 7 pasos.
+
+
+%% ============================================================
+\section{\'Item 3 --- Definici\'on dirigida por sintaxis}
+\label{sec:sdd}
+
+\subsection{Paso 1: Gram\'atica}
+
+Definimos un mini-calculador donde cada sentencia asigna una expresi\'on aritm\'etica a la variable~$x$:
+
+\begin{align*}
+S &\to x\,{=}\,E        & F &\to (\,E\,) \\
+E &\to T\,A             & F &\to 1 \\
+A &\to {+}\,T\,A \mid \varepsilon  & F &\to 2 \\
+T &\to F\,M             & F &\to 3 \\
+M &\to {*}\,F\,M \mid \varepsilon  &   &
+\end{align*}
+
+6 no-terminales, 11 producciones, terminales $\{x, =, +, *, (, ), 1, 2, 3\}$.
+
+En formato de entrada:
+\begin{lstlisting}
+6
+S -> x=E
+E -> TA
+A -> +TA e
+T -> FM
+M -> *FM e
+F -> (E) 1 2 3
+\end{lstlisting}
+
+Esta gram\'atica es LL(1) (verificado por nuestro programa) y usa la t\'ecnica est\'andar de factorizar $E/T$ en colas $A/M$ para eliminar la recursi\'on izquierda.
+
+\subsection{Paso 2: Atributos y reglas sem\'anticas}
+
+\subsubsection*{Tabla de atributos}
+
+\begin{center}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{S\'imbolo} & \textbf{Atributo} & \textbf{Tipo} & \textbf{Significado} \\
+\midrule
+$S$ & \texttt{val} & sintetizado & valor de la expresi\'on \\
+$S$ & \texttt{ops} & sintetizado & n\'umero de operaciones aritm\'eticas \\
+$E$ & \texttt{val} & sintetizado & valor \\
+$E$ & \texttt{ops} & sintetizado & conteo de operaciones \\
+$A$ & \texttt{inh} & heredado    & valor acumulado desde la izquierda \\
+$A$ & \texttt{val} & sintetizado & valor despu\'es de todas las sumas \\
+$A$ & \texttt{ops} & sintetizado & conteo de operaciones \\
+$T$ & \texttt{val} & sintetizado & valor \\
+$T$ & \texttt{ops} & sintetizado & conteo de operaciones \\
+$M$ & \texttt{inh} & heredado    & valor acumulado desde la izquierda \\
+$M$ & \texttt{val} & sintetizado & valor despu\'es de todas las multiplicaciones \\
+$M$ & \texttt{ops} & sintetizado & conteo de operaciones \\
+$F$ & \texttt{val} & sintetizado & valor del factor \\
+$F$ & \texttt{ops} & sintetizado & conteo de operaciones \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsubsection*{Reglas sem\'anticas}
+
+\begin{center}
+\begin{longtable}{@{}l l@{}}
+\toprule
+\textbf{Producci\'on} & \textbf{Reglas sem\'anticas} \\
+\midrule
+\endhead
+$S \to x\,{=}\,E$ &
+  $S.\texttt{val} = E.\texttt{val}$; \quad $S.\texttt{ops} = E.\texttt{ops}$ \\[6pt]
+
+$E \to T\,A$ &
+  $A.\texttt{inh} = T.\texttt{val}$; \quad $E.\texttt{val} = A.\texttt{val}$; \\
+  & $E.\texttt{ops} = T.\texttt{ops} + A.\texttt{ops}$ \\[6pt]
+
+$A \to {+}\,T\,A_1$ &
+  $A_1.\texttt{inh} = A.\texttt{inh} + T.\texttt{val}$; \quad $A.\texttt{val} = A_1.\texttt{val}$; \\
+  & $A.\texttt{ops} = 1 + T.\texttt{ops} + A_1.\texttt{ops}$ \\[6pt]
+
+$A \to \varepsilon$ &
+  $A.\texttt{val} = A.\texttt{inh}$; \quad $A.\texttt{ops} = 0$ \\[6pt]
+
+$T \to F\,M$ &
+  $M.\texttt{inh} = F.\texttt{val}$; \quad $T.\texttt{val} = M.\texttt{val}$; \\
+  & $T.\texttt{ops} = F.\texttt{ops} + M.\texttt{ops}$ \\[6pt]
+
+$M \to {*}\,F\,M_1$ &
+  $M_1.\texttt{inh} = M.\texttt{inh} \times F.\texttt{val}$; \quad $M.\texttt{val} = M_1.\texttt{val}$; \\
+  & $M.\texttt{ops} = 1 + F.\texttt{ops} + M_1.\texttt{ops}$ \\[6pt]
+
+$M \to \varepsilon$ &
+  $M.\texttt{val} = M.\texttt{inh}$; \quad $M.\texttt{ops} = 0$ \\[6pt]
+
+$F \to (\,E\,)$ &
+  $F.\texttt{val} = E.\texttt{val}$; \quad $F.\texttt{ops} = E.\texttt{ops}$ \\[6pt]
+
+$F \to 1$ &
+  $F.\texttt{val} = 1$; \quad $F.\texttt{ops} = 0$ \\[3pt]
+
+$F \to 2$ &
+  $F.\texttt{val} = 2$; \quad $F.\texttt{ops} = 0$ \\[3pt]
+
+$F \to 3$ &
+  $F.\texttt{val} = 3$; \quad $F.\texttt{ops} = 0$ \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+\subsection{Paso 3: Clasificaci\'on}
+
+La SDD es \textbf{L-atribuida} pero \textbf{no S-atribuida}.
+
+\begin{itemize}
+  \item \textbf{No es S-atribuida}: los atributos $A.\texttt{inh}$ y $M.\texttt{inh}$ son heredados, por lo que la SDD contiene atributos heredados y no puede ser S-atribuida.
+  \item \textbf{Es L-atribuida}: cada atributo heredado depende solo de:
+    \begin{enumerate}
+      \item atributos heredados de la cabeza (ej.\ $A_1.\texttt{inh}$ depende de $A.\texttt{inh}$), o
+      \item atributos de s\'imbolos a la izquierda en el cuerpo de la producci\'on (ej.\ $A.\texttt{inh}$ en $E \to TA$ depende de $T.\texttt{val}$, y $T$ est\'a a la izquierda de~$A$).
+    \end{enumerate}
+    Ning\'un atributo heredado depende de un s\'imbolo a su derecha en el cuerpo. Esto satisface la Definici\'on~5.4 del libro.
+\end{itemize}
+
+\subsection{Paso 4: Ejemplo a mano}
+
+\textbf{Cadena de entrada}: \texttt{x=2*3+1}
+
+\subsubsection*{\'Arbol de parseo (anotado)}
+
+Salida de nuestro programa para \texttt{x=2*3+1}:
+
+\begin{lstlisting}
+S [val=7, ops=2]
+  x [lexval='x']
+  = [lexval='=']
+  E [val=7, ops=2]
+    T [val=6, ops=1]
+      F [val=2, ops=0]
+        2 [lexval='2']
+      M [inh=2, val=6, ops=1]
+        * [lexval='*']
+        F [val=3, ops=0]
+          3 [lexval='3']
+        M [inh=6, val=6, ops=0]
+          e
+    A [inh=6, val=7, ops=1]
+      + [lexval='+']
+      T [val=1, ops=0]
+        F [val=1, ops=0]
+          1 [lexval='1']
+        M [inh=1, val=1, ops=0]
+          e
+      A [inh=7, val=7, ops=0]
+        e
+\end{lstlisting}
+
+\subsubsection*{Grafo de dependencias}
+
+El grafo de dependencias tiene una arista desde cada atributo usado hacia el atributo que define. Para \texttt{x=2*3+1}, las dependencias clave son:
+
+\begin{itemize}[nosep]
+  \item $2.\texttt{lexval} \to F.\texttt{val} \to M.\texttt{inh}$
+  \item $3.\texttt{lexval} \to F'.\texttt{val}$; luego $M.\texttt{inh} \times F'.\texttt{val} \to M'.\texttt{inh} = 6$
+  \item $M'.\texttt{val} = M'.\texttt{inh} = 6 \to M.\texttt{val} \to T.\texttt{val}$
+  \item $T.\texttt{val} \to A.\texttt{inh} = 6$
+  \item $1.\texttt{lexval} \to F''.\texttt{val} \to M''.\texttt{inh} \to M''.\texttt{val} \to T'.\texttt{val}$
+  \item $A.\texttt{inh} + T'.\texttt{val} \to A'.\texttt{inh} = 7 \to A'.\texttt{val} \to A.\texttt{val} \to E.\texttt{val} \to S.\texttt{val} = 7$
+\end{itemize}
+
+El grafo es ac\'iclico, por lo que el orden topol\'ogico funciona y la evaluaci\'on procede de izquierda a derecha, de abajo hacia arriba para atributos sintetizados y de arriba hacia abajo para los heredados.
+
+\subsubsection*{Orden de evaluaci\'on}
+
+El orden topol\'ogico producido por nuestro programa (algoritmo de Kahn, empates rotos por id de nodo):
+
+\begin{enumerate}[nosep]
+  \item $F.\texttt{val} = 2$ \quad (del lexval de $2$)
+  \item $M.\texttt{inh} = 2$
+  \item $F'.\texttt{val} = 3$ \quad (del lexval de $3$)
+  \item $M'.\texttt{inh} = 2 \times 3 = 6$
+  \item $M'.\texttt{val} = 6$; $M.\texttt{val} = 6$; $T.\texttt{val} = 6$
+  \item $A.\texttt{inh} = 6$
+  \item $F''.\texttt{val} = 1$; $M''.\texttt{inh} = 1$; $M''.\texttt{val} = 1$; $T'.\texttt{val} = 1$
+  \item $A'.\texttt{inh} = 6 + 1 = 7$; $A'.\texttt{val} = 7$; $A.\texttt{val} = 7$
+  \item $E.\texttt{val} = 7$; $S.\texttt{val} = 7$
+\end{enumerate}
+
+Resultado: $x = 7$, operaciones: 2 (una multiplicaci\'on, una suma).
+
+\subsection{Pasos 5--6: Implementaci\'on y pruebas}
+
+\subsubsection*{Implementaci\'on}
+
+La SDD se almacena como datos en \texttt{sdd\_definition.py}: para cada producci\'on (indexada 0--10), una lista de reglas, donde cada regla declara qu\'e atributo define, qu\'e atributos usa (por posici\'on), y un lambda que calcula el valor. El evaluador en \texttt{sdd\_evaluator.py} es \emph{gen\'erico}: recibe la gram\'atica, el diccionario de reglas y las declaraciones de atributos, y no sabe nada sobre la SDD espec\'ifica.
+
+El evaluador:
+\begin{enumerate}[nosep]
+  \item Parsea la entrada usando el parser LL(1) (Algoritmo~4.34) y construye un \'arbol de parseo (objetos \texttt{TreeNode}).
+  \item Asigna ids \'unicos a los nodos (recorrido pre-order).
+  \item Construye el grafo de dependencias instanciando las reglas de cada producci\'on en cada nodo interno.
+  \item Calcula un orden topol\'ogico usando el algoritmo de Kahn. Si el orden es incompleto (no todos los v\'ertices son alcanzados), la SDD es circular.
+  \item Eval\'ua los atributos en orden topol\'ogico.
+\end{enumerate}
+
+\subsubsection*{Resultados de las pruebas}
+
+\begin{center}
+\begin{tabular}{@{}llccl@{}}
+\toprule
+\textbf{Cadena} & \textbf{Estado} & \textbf{val} & \textbf{ops} & \textbf{Prop\'osito} \\
+\midrule
+\texttt{x=1}         & aceptada & 1 & 0 & cadena m\'as corta \\
+\texttt{x=2+3}       & aceptada & 5 & 1 & suma simple \\
+\texttt{x=2*3+1}     & aceptada & 7 & 2 & prueba de precedencia \\
+\texttt{x=(1+2)*3}   & aceptada & 9 & 2 & anidamiento profundo \\
+\texttt{x=1+2+3}     & aceptada & 6 & 2 & suma recursiva a derecha \\
+\texttt{1+2}          & rechazada & --- & --- & no est\'a en el lenguaje (falta \texttt{x=}) \\
+\texttt{+}            & rechazada & --- & --- & no est\'a en el lenguaje \\
+$\varepsilon$         & rechazada & --- & --- & cadena vac\'ia \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Todos los resultados son matem\'aticamente correctos y coinciden con el c\'alculo a mano.
+
+\subsubsection*{Detecci\'on de circularidad}
+
+Para probar la detecci\'on de circularidad, modificamos temporalmente la regla de $A \to \varepsilon$: en vez de $A.\texttt{val} = A.\texttt{inh}$, pusimos $A.\texttt{val} = A.\texttt{val}$ (una auto-dependencia). Ejecutando con la bandera \texttt{--circular}:
+
+\begin{lstlisting}
+$ python sdd_main.py --circular
+(Using circular SDD for testing)
+
+x=1
+The SDD is circular for this input.
+\end{lstlisting}
+
+El orden topol\'ogico detecta el ciclo y lo reporta correctamente.
+
+
+%% ============================================================
+\section{Problemas encontrados y soluciones}
+\label{sec:problems}
+
+\begin{enumerate}
+  \item \textbf{Epsilon en conjuntos FIRST.}
+    La primera versi\'on del ciclo de punto fijo de FIRST no propagaba $\varepsilon$ correctamente cuando un no-terminal derivaba $\varepsilon$ a trav\'es de una cadena (ej.\ $A \to B$, $B \to \varepsilon$).
+    La soluci\'on fue verificar si todos los s\'imbolos en el cuerpo de una producci\'on pueden derivar $\varepsilon$ antes de agregar $\varepsilon$ al conjunto de la cabeza.
+
+  \item \textbf{Conflictos SLR(1) con cuerpos epsilon.}
+    Cuando una producci\'on como $B \to \varepsilon$ se representa con un cuerpo vac\'io, el \'item de reducci\'on tiene el punto en la posici\'on~0 y \texttt{is\_reduce()} retornaba verdadero inmediatamente.
+    Tuvimos que asegurarnos de que \texttt{\_slr\_body} mapee \texttt{[e]} a una tupla vac\'ia para que la maquinaria de \'items LR lo maneje correctamente, y que FOLLOW se use para las acciones de reducci\'on.
+\end{enumerate}
+
+
+%% ============================================================
+\section*{Referencias}
+
+Aho, A.~V., Lam, M.~S., Sethi, R., \& Ullman, J.~D. (2007).
+\emph{Compilers: Principles, Techniques, and Tools} (2da ed.).
+Pearson / Addison-Wesley.
+
+\end{document}

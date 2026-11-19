@@ -4,8 +4,6 @@ from grammar import EPSILON, END_MARKER
 
 
 class TreeNode:
-    __slots__ = ('symbol', 'children', 'prod_index', 'attrs', 'node_id')
-
     def __init__(self, symbol):
         self.symbol = symbol
         self.children = []

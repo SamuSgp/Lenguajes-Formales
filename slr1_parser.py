@@ -6,8 +6,6 @@ AUGMENTED_START = "S'"
 
 
 class Item:
-    __slots__ = ('head', 'body', 'dot')
-
     def __init__(self, head, body, dot):
         self.head = head
         self.body = body
